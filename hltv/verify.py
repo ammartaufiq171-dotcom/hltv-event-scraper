@@ -87,6 +87,28 @@ def run(out: str) -> int:
     if odd:
         failures.append(f"unparseable ratings: {odd[:5]}")
 
+    # 6. headshots present and never exceed kills
+    hs_rows = [r for r in per_map if r.get("headshots")]
+    over = [r for r in hs_rows if r["kills"] and int(r["headshots"]) > int(r["kills"])]
+    print(f"6 hs     : {len(hs_rows)}/{len(per_map)} map rows carry headshots")
+    if not hs_rows:
+        failures.append("no headshot data — run `python -m hltv details`")
+    if over:
+        failures.append(f"headshots exceed kills in {len(over)} rows")
+
+    # 7. per-map headshots must add up to the series figure
+    s_hs, m_hs = defaultdict(int), defaultdict(int)
+    for r in per_match:
+        if r.get("headshots"):
+            s_hs[(r["match_id"], r["player"])] += int(r["headshots"])
+    for r in per_map:
+        if r.get("headshots"):
+            m_hs[(r["match_id"], r["player"])] += int(r["headshots"])
+    diff_hs = [k for k in s_hs if m_hs.get(k, 0) != s_hs[k]]
+    print(f"7 hs sum : {len(s_hs) - len(diff_hs)}/{len(s_hs)} series totals equal their map sums")
+    if diff_hs:
+        failures.append(f"headshot totals disagree for {len(diff_hs)} player-matches")
+
     if failures:
         print("\nFAIL")
         for f in failures:

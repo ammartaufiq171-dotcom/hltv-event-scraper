@@ -208,6 +208,10 @@ async (url) => {
     };
   };
 
+  // "Detailed stats" link: /stats/matches/<statsMatchId>/<slug>
+  const detLink = doc.querySelector('a[href*="/stats/matches/"]:not([href*="mapstatsid"])');
+  const detailsPath = detLink ? detLink.getAttribute('href') : null;
+
   const allBlock = doc.querySelector('#all-content');
   const totals = allBlock
     ? Array.from(allBlock.querySelectorAll('table.totalstats')).map(parseTable)
@@ -227,7 +231,6 @@ async (url) => {
     const link = h.querySelector('a[href*="mapstatsid"]');
     const href = link ? link.getAttribute('href') : null;
     const mid = href ? (href.match(/mapstatsid\/(\d+)/) || [])[1] : null;
-
     const pick = (sel, cls) => {
       const e = h.querySelector(sel + ' .' + cls);
       return e ? e.innerText.trim() : null;
@@ -242,13 +245,67 @@ async (url) => {
     return {
       map: mn ? mn.innerText.trim() : null,
       statsId: mid,
+      statsPath: href,
       halfScores: half ? half.innerText.replace(/\s+/g, ' ').trim() : null,
       s1: s1, s2: s2, t1: t1, t2: t2,
       tables: block ? Array.from(block.querySelectorAll('table.totalstats')).map(parseTable) : []
     };
   });
 
-  return { url, title: doc.title, stage, totals, maps };
+  return { url, title: doc.title, stage, detailsPath, totals, maps };
+}
+"""
+
+# ------------------------------------------------------------ detailed stats
+# /stats/matches/<id>/<slug> (series) and /stats/matches/mapstatsid/<id>/<slug>
+# (single map) share one table shape. Columns are resolved from the header text
+# so a reordered column cannot silently shift the numbers into the wrong field.
+# "K (hs)"      -> 44 (18)  kills with headshots
+# "A (f)"       -> 5 (0)    assists with flash assists
+# "D (t)"       -> 36 (8)   deaths with traded deaths
+# "Op.K-D"      -> 6 : 4    opening kills : opening deaths
+
+JS_DETAIL = r"""
+async (path) => {
+  const html = await (await fetch(path, {credentials: 'include'})).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+
+  const parse = (t) => {
+    const heads = Array.from(t.querySelectorAll('thead td, thead th'))
+      .map(x => x.innerText.replace(/\s+/g, ' ').trim());
+    const idx = {};
+    heads.forEach((h, i) => { if (!(h in idx)) idx[h] = i; });
+    const get = (tds, label) => {
+      const i = idx[label];
+      return (i !== undefined && tds[i]) ? tds[i].innerText.replace(/\s+/g, ' ').trim() : null;
+    };
+    return {
+      team: heads[0] || null,
+      players: Array.from(t.querySelectorAll('tbody tr')).map(tr => {
+        const tds = Array.from(tr.querySelectorAll('td'));
+        return {
+          nick: tds[0] ? tds[0].innerText.trim() : null,
+          opKd: get(tds, 'Op.K-D'),
+          opEkd: get(tds, 'Op.eK-eD'),
+          multiKills: get(tds, 'MKs'),
+          kast: get(tds, 'KAST'),
+          ekast: get(tds, 'eKAST'),
+          clutches: get(tds, '1vsX'),
+          killsHs: get(tds, 'K (hs)'),
+          ekillsHs: get(tds, 'eK (hs)'),
+          assistsFlash: get(tds, 'A (f)'),
+          deathsTraded: get(tds, 'D (t)'),
+          edeathsTraded: get(tds, 'eD (t)'),
+          adr: get(tds, 'ADR'),
+          eadr: get(tds, 'eADR'),
+          swing: get(tds, 'Swing'),
+          rating: get(tds, 'Rating3.0')
+        };
+      })
+    };
+  };
+
+  return { path, tables: Array.from(doc.querySelectorAll('table.totalstats')).map(parse) };
 }
 """
 

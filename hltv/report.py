@@ -32,7 +32,7 @@ def build_report(out: str) -> None:
     sched = rd(out, "schedule_upcoming.csv")
 
     # totals rebuilt from map rows (K/D sums, averaged ADR/KAST)
-    agg = defaultdict(lambda: {"team": "", "maps": 0, "k": 0, "d": 0, "adr": [], "kast": []})
+    agg = defaultdict(lambda: {"team": "", "maps": 0, "k": 0, "d": 0, "hs": 0, "adr": [], "kast": []})
     for r in per_map:
         if not r["team_score"]:
             continue
@@ -41,6 +41,8 @@ def build_report(out: str) -> None:
         a["maps"] += 1
         a["k"] += int(r["kills"] or 0)
         a["d"] += int(r["deaths"] or 0)
+        if r.get("headshots"):
+            a["hs"] += int(r["headshots"])
         if r["adr"]:
             a["adr"].append(float(r["adr"]))
         if r["kast_pct"]:
@@ -56,6 +58,8 @@ def build_report(out: str) -> None:
             "player": pl, "team": tm, "maps": a["maps"], "rounds": rounds.get((pl, tm), ""),
             "kills": k, "deaths": d, "kd_diff": k - d,
             "kd_ratio": round(k / d, 2) if d else "",
+            "headshots": a["hs"],
+            "hs_pct": round(100.0 * a["hs"] / k, 1) if k else "",
             "adr_avg": round(sum(a["adr"]) / len(a["adr"]), 1) if a["adr"] else "",
             "kast_avg": round(sum(a["kast"]) / len(a["kast"]), 1) if a["kast"] else "",
             "rating_3_0": rating.get((pl, tm), ""),
@@ -75,11 +79,11 @@ def build_report(out: str) -> None:
     L.append(f"| Players | {len(tp)} |")
 
     L.append("\n## Top 15 players by Rating 3.0\n")
-    L.append("| # | Player | Team | Maps | Rating | K–D | +/− | ADR | KAST% |")
+    L.append("| # | Player | Team | Maps | Rating | K–D | +/− | ADR | HS% |")
     L.append("|---|---|---|---|---|---|---|---|---|")
     for i, p in enumerate(derived[:15], 1):
         L.append(f'| {i} | {p["player"]} | {p["team"]} | {p["maps"]} | **{p["rating_3_0"]}** | '
-                 f'{p["kills"]}–{p["deaths"]} | {p["kd_diff"]:+d} | {p["adr_avg"]} | {p["kast_avg"]} |')
+                 f'{p["kills"]}–{p["deaths"]} | {p["kd_diff"]:+d} | {p["adr_avg"]} | {p["hs_pct"]} |')
 
     L.append("\n## Team stats\n")
     L.append("| # | Team | Maps | K–D diff | K/D | Rating |")

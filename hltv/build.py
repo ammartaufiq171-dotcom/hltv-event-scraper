@@ -30,6 +30,51 @@ def split_kd(s):
     return (int(m.group(1)), int(m.group(2))) if m else (None, None)
 
 
+def split_pair(v):
+    """'44 (18)' -> (44, 18). Used for K (hs), A (f), D (t)."""
+    m = re.match(r"^\s*(\d+)\s*(?:\((\d+)\))?\s*$", clean(v) or "")
+    if not m:
+        return None, None
+    return int(m.group(1)), int(m.group(2) or 0)
+
+
+def _detail_index(tables):
+    """{(team, nick): row} from a detailed-stats page's tables."""
+    idx = {}
+    for t in tables or []:
+        team = clean(t.get("team"))
+        for p in t.get("players", []):
+            idx[(team, clean(p.get("nick")))] = p
+    return idx
+
+
+def _hs_fields(row):
+    """Headshot / flash / traded numbers for one player.
+
+    Only supplementary columns are returned: kills/deaths already come from the
+    scoreboard's K-D, so returning them here would collide with those keys.
+    """
+    if not row:
+        return {"headshots": "", "hs_pct": "", "ekills_hs": "", "assists": "",
+                "flash_assists": "", "traded_deaths": "", "multi_kills": "",
+                "clutches": "", "op_kd": ""}
+    k, hs = split_pair(row.get("killsHs"))
+    a, fa = split_pair(row.get("assistsFlash"))
+    _, td = split_pair(row.get("deathsTraded"))
+    ek, ehs = split_pair(row.get("ekillsHs"))
+    return {
+        "headshots": hs if hs is not None else "",
+        "hs_pct": round(100.0 * hs / k, 1) if (k and hs is not None) else "",
+        "ekills_hs": f"{ek} ({ehs})" if ek is not None else "",
+        "assists": a if a is not None else "",
+        "flash_assists": fa if fa is not None else "",
+        "traded_deaths": td if td is not None else "",
+        "multi_kills": clean(row.get("multiKills")),
+        "clutches": clean(row.get("clutches")),
+        "op_kd": clean(row.get("opKd")),
+    }
+
+
 def load_jsonl(path):
     if not os.path.exists(path):
         return []
@@ -82,6 +127,7 @@ def build(out: str) -> dict:
     meta = json.load(open(os.path.join(out, "raw_event.json"), encoding="utf-8")) if \
         os.path.exists(os.path.join(out, "raw_event.json")) else {}
     matches = load_jsonl(os.path.join(out, "raw_matches.jsonl"))
+    details = {r["matchId"]: r for r in load_jsonl(os.path.join(out, "raw_details.jsonl"))}
     upcoming_raw = []
     up_path = os.path.join(out, "raw_upcoming.json")
     if os.path.exists(up_path):
@@ -171,6 +217,8 @@ def build(out: str) -> dict:
         dt = datetime.fromtimestamp(int(r["unix"]) / 1000, TZ).strftime("%Y-%m-%d %H:%M")
         stage = stages.get(r["url"], "")
         names = [t["team"] for t in det["totals"] if t and t.get("team")]
+        drec = details.get(det["matchId"], {})
+        series_idx = _detail_index(drec.get("series"))
 
         for t in det["totals"]:
             if not t or not t.get("team"):
@@ -190,9 +238,12 @@ def build(out: str) -> dict:
                     "adr": clean(p.get("adr")), "eadr": clean(p.get("eadr")),
                     "kast_pct": clean(p.get("kast")), "ekast_pct": clean(p.get("ekast")),
                     "rating_3_0": clean(p.get("rating")),
+                    **_hs_fields(series_idx.get((t["team"], clean(p.get("nick"))))),
                 })
 
         for m in det["maps"]:
+            map_detail = (drec.get("maps") or {}).get(str(m.get("statsId")))
+            map_idx = _detail_index(map_detail)
             for t in m["tables"]:
                 if not t or not t.get("team"):
                     continue
@@ -210,6 +261,7 @@ def build(out: str) -> dict:
                         "kills": k if k is not None else "", "deaths": d if d is not None else "",
                         "swing_pct": clean(p.get("swing")), "adr": clean(p.get("adr")),
                         "kast_pct": clean(p.get("kast")), "rating_3_0": clean(p.get("rating")),
+                        **_hs_fields(map_idx.get((t["team"], clean(p.get("nick"))))),
                     })
 
     _rows_to_csv(os.path.join(out, "player_stats_per_match.csv"), per_match)

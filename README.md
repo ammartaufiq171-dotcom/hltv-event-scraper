@@ -10,14 +10,30 @@ Built and validated against **IEM Beijing 2026** (event 8245): 26 matches,
 ```
 data/results.csv                26 matches: date, stage, teams, score, maps
 data/player_stats_tournament.csv 80 players: HLTV rating 3.0 table
-data/player_stats_derived.csv    totals from map data: K, D, +/-, ADR, KAST
-data/player_stats_per_match.csv  one row per player per series
+data/player_stats_derived.csv    totals from map data: K, D, +/-, ADR, KAST, headshots
+data/player_stats_per_match.csv  one row per player per series (incl. K (hs))
 data/player_stats_per_map.csv    one row per player per map (650 for IEM Beijing)
 data/team_stats.csv              16 teams: maps, K-D diff, K/D, rating
-data/schedule_upcoming.csv       unplayed bracket slots
+data/schedule_upcoming.csv       unplayed fixtures
 data/event.json                  everything above bundled
 data/summary.md                  readable report: top players, all results
 ```
+
+### Headshot columns
+
+Both player tables (`per_match`, `per_map`) and the derived totals carry the
+detailed-stats fields, joined per player per team:
+
+| Column | HLTV column | Example |
+|---|---|---|
+| `headshots` | `K (hs)` | `44 (18)` → 18 |
+| `hs_pct` | derived | 18 / 44 → 40.9 |
+| `ekills_hs` | `eK (hs)` | `"43 (18)"` |
+| `assists`, `flash_assists` | `A (f)` | `5 (0)` |
+| `traded_deaths` | `D (t)` | `36 (8)` → 8 |
+| `multi_kills` | `MKs` | 9 |
+| `clutches` | `1vsX` | 2 |
+| `op_kd` | `Op.K-D` | `6 : 4` |
 
 ## Why a real browser
 
@@ -48,6 +64,8 @@ Partial runs:
 ```bash
 python -m hltv scrape --event 8245 --out ./data      # raw only
 python -m hltv scrape --event 8245 --limit 3         # smoke test
+python -m hltv scrape --event 8245 --no-details      # skip headshot pages
+python -m hltv details --out ./data                  # only the detailed-stats pages
 python -m hltv build  --out ./data                   # raw -> CSVs
 python -m hltv report --out ./data                   # summary.md + derived
 python -m hltv verify --out ./data                   # self-check, exit 1 on failure
@@ -67,6 +85,7 @@ has, so an interrupted run resumes where it stopped.
 | team stats | `/stats/teams?event=<id>` | maps, K-D diff, K/D, rating |
 | player stats | `/stats/players?event=<id>` | rating 3.0, net kills/24, eco + round swing |
 | match detail | `/matches/<id>/<slug>` | series totals, per-map tables, stage line |
+| detailed stats | `/stats/matches/<id>/<slug>` and `/stats/matches/mapstatsid/<id>/<slug>` | K (hs), eK (hs), A (f), D (t), MKs, 1vsX, opening K-D, per series and per map |
 
 Stage for each result comes from the match page itself
 (`.veto-box .preformatted-text` reads `Best of 3 (LAN) * Group A upper bracket
@@ -87,6 +106,13 @@ Four things worth knowing if you fork this:
 4. **Never parse the map score out of squashed text.** `.mapholder` innerText
    reads `NukeHEROIC13STATS (9:3; 4:1)B84`, and teams like `B8`, `G2`, `9z`
    glue onto the score. Read `.results-team-score` instead.
+5. **The detailed-stats page has its own match id.** Headshots live at
+   `/stats/matches/<statsMatchId>/<slug>`, which is unrelated to the match page
+   id (`/matches/2399995` → `/stats/matches/132722`). Resolve it from the
+   "Detailed stats" link on the match page; never build it by hand. The per-map
+   versions reuse the `mapstatsid` you already capture from each `.mapholder`.
+   Columns there are read by header label (`K (hs)`, `A (f)`, `D (t)`), so a
+   reordered table cannot silently shift numbers into the wrong field.
 
 ## Verification
 
@@ -97,6 +123,8 @@ Four things worth knowing if you fork this:
 - no unplayed map leaked a score
 - each player's match-total kills equal the sum of their map kills
 - ratings parse as `N.NN`
+- per-map headshots add up to the series headshot figure
+- headshots never exceed kills
 
 ## Caveats
 
