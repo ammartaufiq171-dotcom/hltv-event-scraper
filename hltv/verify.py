@@ -44,9 +44,12 @@ def run(out: str) -> int:
         if r["team_score"]:
             maps_by_match[r["match_id"]][r["map"]][r["team"]] = int(r["team_score"])
 
-    bad_series = []
+    bad_series, forfeits = [], []
     for r in res:
         w1 = w2 = 0
+        if not maps_by_match.get(r["match_id"]):
+            forfeits.append(r["match_id"])   # 1-0 default win: no maps, no stats
+            continue
         for _, teams in maps_by_match.get(r["match_id"], {}).items():
             if len(teams) != 2:
                 continue
@@ -59,7 +62,9 @@ def run(out: str) -> int:
         if (w1, w2) != (int(r["score1"]), int(r["score2"])):
             bad_series.append((r["match_id"], f"{r['team1']} {r['score1']}-{r['score2']} {r['team2']}",
                                f"reconstructed {w1}-{w2}"))
-    print(f"2 series: {len(res) - len(bad_series)}/{len(res)} scores reconstructed from map winners")
+    checked = len(res) - len(forfeits)
+    extra = f" ({len(forfeits)} forfeit(s) with no map data: {', '.join(forfeits)})" if forfeits else ""
+    print(f"2 series: {checked - len(bad_series)}/{checked} scores reconstructed from map winners{extra}")
     if bad_series:
         failures.append(f"series score mismatch: {bad_series[:5]}")
 

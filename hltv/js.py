@@ -331,6 +331,8 @@ async (path) => {
 
 # --------------------------------------------------------------- upcoming
 # The event's Matches tab lists not-yet-played fixtures with their stage.
+# JS_UPCOMING_LIVE reads the same rows from the already-loaded tab, for when
+# that path is challenged to fetch() but renders fine when navigated to.
 
 JS_UPCOMING = r"""
 async (url) => {
@@ -374,6 +376,31 @@ async (url) => {
       r.stage = i >= 0 ? t.slice(i + 1).trim() : null;
     } catch (e) { /* leave stage empty */ }
   }
+  return rows;
+}
+"""
+
+# Live-DOM fallback for the fixtures list (see scrape.scrape_event).
+JS_UPCOMING_LIVE = r"""
+() => {
+  const doc = document;
+  const rows = Array.from(doc.querySelectorAll('.match-bottom')).map(row => {
+    const a = row.querySelector('a[href*="/matches/"]');
+    const t = row.querySelector('.match-time');
+    const meta = row.querySelector('.match-meta');
+    const st = row.querySelector('.match-stage');
+    const names = Array.from(row.querySelectorAll('.match-teamname')).map(e => e.innerText.trim());
+    return {
+      url: a ? a.getAttribute('href') : null,
+      unix: t ? t.getAttribute('data-unix') : null,
+      time: t ? t.innerText.trim() : null,
+      bo: meta ? meta.innerText.trim() : null,
+      team1: names[0] || null,
+      team2: names[1] || null,
+      stage: st ? st.innerText.replace(/\s+/g, ' ').trim() : null,
+      stageClass: st ? String(st.className) : null
+    };
+  });
   return rows;
 }
 """

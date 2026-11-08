@@ -14,3 +14,7 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# scraped output (any event dir) and archives
+data-*/
+*.rar

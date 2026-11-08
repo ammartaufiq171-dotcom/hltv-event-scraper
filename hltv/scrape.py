@@ -55,7 +55,13 @@ def _warmup(c: CDP, path: str) -> bool:
         return False
 
 
-def _call(c: CDP, code: str, *args, retries: int = 4, pause: float = 2.0):
+def _call(c: CDP, code: str, *args, retries: int = 4, pause: float = 2.0,
+          required: bool = True):
+    """Run an extractor, warming up the tab when Cloudflare challenges it.
+
+    required=False is for optional pages (fixtures, brackets): a persistent
+    challenge there loses one column of the output, not the whole run.
+    """
     last = None
     for attempt in range(retries):
         arglist = ", ".join(json.dumps(a) for a in args)
@@ -72,6 +78,9 @@ def _call(c: CDP, code: str, *args, retries: int = 4, pause: float = 2.0):
         if path and attempt < retries - 1:
             print(f"    challenge on {path} — visiting the tab to clear it")
             _warmup(c, path)
+    if not required:
+        print(f"    skipped (optional): {last}")
+        return None
     raise RuntimeError(f"extractor failed after {retries} attempts: {last}")
 
 
@@ -115,9 +124,19 @@ def scrape_event(c: CDP, event_id: int | str, out: str, delay: float = 1.5) -> d
     results = _call(c, js.JS_RESULTS, f"/results?event={event_id}")
     time.sleep(delay)
     _wait_js(c, "document.querySelectorAll('.slotted-bracket-placeholder').length > 0", 8)
-    brackets = _call(c, js.JS_BRACKETS)
+    brackets = _call(c, js.JS_BRACKETS) or []
     time.sleep(delay)
-    upcoming = _call(c, js.JS_UPCOMING, f"/events/{event_id}/matches")
+    upcoming = _call(c, js.JS_UPCOMING, f"/events/{event_id}/matches", required=False) or []
+    if not upcoming:
+        # Some events challenge that path to fetch() while it renders fine when
+        # navigated to, so read it from the live tab instead.
+        print("fixtures   : fetch blocked, reading the Matches tab directly")
+        try:
+            c.goto(f"{BASE}/events/{event_id}/matches")
+            _wait_challenge(c, 15)
+            upcoming = _call(c, js.JS_UPCOMING_LIVE, required=False) or []
+        except Exception as exc:
+            print(f"    fixtures unavailable: {str(exc)[:80]}")
     time.sleep(delay)
     teams = _call(c, js.JS_TEAMS, f"/stats/teams?event={event_id}")
     time.sleep(delay)
@@ -163,15 +182,22 @@ def scrape_matches(c: CDP, out: str, delay: float = 1.5, limit: int | None = Non
         todo = todo[:limit]
     print(f"matches    : {len(results)} total, {len(done)} cached, {len(todo)} to scrape")
 
+    failed = 0
     for i, row in enumerate(todo, 1):
-        data = _call(c, js.JS_MATCH, row["url"])
+        data = _call(c, js.JS_MATCH, row["url"], required=False)
+        if not data:
+            failed += 1
+            print(f"  [{i}/{len(todo)}] SKIP {row['url']} (blocked)")
+            continue
         data["matchId"] = (row["url"].split("/matches/")[1] or "").split("/")[0]
         with open(jsonl, "a", encoding="utf-8") as f:
             f.write(json.dumps(data, ensure_ascii=False) + "\n")
         maps = [(m["map"], m["s1"], m["s2"]) for m in data["maps"]]
         print(f"  [{i}/{len(todo)}] {data['matchId']} {len(data['maps'])} maps {maps}")
         time.sleep(delay)
-    return len(todo)
+    if failed:
+        print(f"  {failed} match page(s) skipped — re-run to retry them")
+    return len(todo) - failed
 
 
 def scrape_details(c: CDP, out: str, delay: float = 1.5, limit: int | None = None) -> int:
@@ -207,14 +233,17 @@ def scrape_details(c: CDP, out: str, delay: float = 1.5, limit: int | None = Non
     for i, m in enumerate(todo, 1):
         rec = {"matchId": m["matchId"], "series": [], "maps": {}}
         if m.get("detailsPath"):
-            rec["series"] = _call(c, js.JS_DETAIL, m["detailsPath"])["tables"]
+            got = _call(c, js.JS_DETAIL, m["detailsPath"], required=False)
+            rec["series"] = (got or {}).get("tables", [])
             time.sleep(delay)
         for mp in m.get("maps", []):
             path = mp.get("statsPath")
             if not path or not is_scored(mp):
                 continue
             key = mp.get("statsId") or mp.get("map")
-            rec["maps"][key] = _call(c, js.JS_DETAIL, path)["tables"]
+            got = _call(c, js.JS_DETAIL, path, required=False)
+            if got:
+                rec["maps"][key] = got.get("tables", [])
             time.sleep(delay)
 
         with open(jsonl, "a", encoding="utf-8") as f:

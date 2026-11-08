@@ -148,13 +148,20 @@ def build(out: str) -> dict:
     res_rows = []
     for r in sorted(results, key=lambda x: int(x["unix"] or 0)):
         det = by_url.get(r["url"])
-        maps = [f'{m["map"]} {m["s1"]}-{m["s2"]}' for m in (det or {}).get("maps", [])
-                if is_score(m.get("s1")) and is_score(m.get("s2"))]
+        map_rows = (det or {}).get("maps", [])
+        # A forfeit shows up as a map literally named "Default" at 1-0, with no
+        # stats; keep it out of the map summary but flag it on the row.
+        forfeit = any((m.get("map") or "").strip().lower() == "default" for m in map_rows)
+        maps = [f'{m["map"]} {m["s1"]}-{m["s2"]}' for m in map_rows
+                if is_score(m.get("s1")) and is_score(m.get("s2"))
+                and (m.get("map") or "").strip().lower() != "default"]
         dt = datetime.fromtimestamp(int(r["unix"]) / 1000, TZ)
         winner = r["team2"] if clean(r.get("s2cls")) == "score-won" else r["team1"]
         # Per-match stage from the match page wins; bracket join is the fallback.
         stage = ((det or {}).get("stage") or stages.get(r["url"], "")).strip()
-        stage = re.split(r"\.\s", stage)[0].strip().rstrip(".")  # drop "Winner advances ..." notes
+        # HLTV appends notes to the stage line ("Group D opening match ** Ed1m
+        # substitutes jeyN"): keep the stage, drop the annotation.
+        stage = re.split(r"\*\*|\.\s", stage)[0].strip().rstrip(".")
         res_rows.append({
             "date_local": dt.strftime("%Y-%m-%d"),
             "time_local": dt.strftime("%H:%M"),
@@ -164,6 +171,7 @@ def build(out: str) -> dict:
             "score2": clean(r["s2"]), "team2": r["team2"],
             "winner": winner,
             "format": (r.get("bo") or "").upper(),
+            "forfeit": "yes" if forfeit else "",
             "maps": "; ".join(maps),
             "match_id": (r["url"] or "").split("/matches/")[-1].split("/")[0],
             "url": "https://www.hltv.org" + r["url"],
