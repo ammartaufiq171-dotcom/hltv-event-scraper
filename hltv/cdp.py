@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import requests
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 DEFAULT_PORT = 9222
@@ -34,26 +36,60 @@ class CDP:
 
     def __init__(self, ws_url: str | None = None, port: int = DEFAULT_PORT,
                  host: str = "hltv.org", timeout: int = 30):
-        url = ws_url or find_tab(port, host)
+        self._ws_url = ws_url
+        self._port = port
+        self._host = host
+        self._timeout = timeout
+        self._id = 0
+        self.ws: Any = None
+        self._connect()
+
+    def _connect(self) -> None:
+        url = self._ws_url or find_tab(self._port, self._host)
         if not url:
             raise RuntimeError(
                 "No page target found on port %d. Launch Chrome with "
-                "--remote-debugging-port=%d first (see scripts/open_chrome.sh)." % (port, port)
+                "--remote-debugging-port=%d first (see scripts/open_chrome.sh)." % (self._port, self._port)
             )
-        self.ws = connect(url, max_size=256 * 1024 * 1024, open_timeout=timeout)
-        self._id = 0
+        self.ws = connect(url, max_size=256 * 1024 * 1024, open_timeout=self._timeout)
+
+    def _reconnect(self) -> None:
+        """Re-attach after Chrome restarts or the socket drops.
+
+        The page target may have been recreated, so the websocket URL is
+        re-resolved instead of reused.
+        """
+        try:
+            if self.ws:
+                self.ws.close()
+        except Exception:
+            pass
+        self._ws_url = None
+        time.sleep(1.0)
+        self._connect()
 
     def send(self, method: str, **params):
         self._id += 1
         mid = self._id
-        self.ws.send(json.dumps({"id": mid, "method": method, "params": params}))
-        while True:
-            msg = json.loads(self.ws.recv())
-            if msg.get("id") != mid:
-                continue
-            if "error" in msg:
-                raise RuntimeError(f"{method}: {msg['error']}")
-            return msg.get("result", {})
+        payload = json.dumps({"id": mid, "method": method, "params": params})
+        for attempt in (1, 2):
+            try:
+                self.ws.send(payload)
+                while True:
+                    msg = json.loads(self.ws.recv())
+                    if msg.get("id") != mid:
+                        continue
+                    if "error" in msg:
+                        raise RuntimeError(f"{method}: {msg['error']}")
+                    return msg.get("result", {})
+            except (ConnectionClosed, ConnectionError, OSError) as exc:
+                if attempt == 2:
+                    raise RuntimeError(
+                        f"{method}: connection lost ({exc}) — is Chrome still running? "
+                        "Re-launch it with scripts/open_chrome.sh and re-run; "
+                        "progress is kept in raw_*.jsonl."
+                    ) from exc
+                self._reconnect()
 
     def js(self, expr: str, await_promise: bool = True, user_gesture: bool = True):
         """Evaluate a JS expression in the page and return its value."""

@@ -23,15 +23,55 @@ def _write(out: str, name: str, data) -> str:
     return path
 
 
-def _call(c: CDP, code: str, *args, retries: int = 3, pause: float = 3.0):
+def _is_blocked(data) -> bool:
+    return isinstance(data, dict) and bool(data.get("blocked"))
+
+
+def _wait_challenge(c: CDP, timeout: float = 25.0) -> bool:
+    """Wait until the tab is no longer sitting on a Cloudflare challenge."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if "just a moment" not in (c.title() or "").lower():
+                return True
+        except Exception:
+            pass
+        time.sleep(1.0)
+    return False
+
+
+def _warmup(c: CDP, path: str) -> bool:
+    """Load a URL in the real tab so Cloudflare issues clearance for it.
+
+    A same-origin fetch of a freshly challenged path returns 403 with the
+    interstitial, while loading it in the visible tab gets solved; subsequent
+    fetches of that path then return 200. Far cheaper than scraping by
+    navigation, and it recovers runs that hit a mid-scrape challenge.
+    """
+    try:
+        c.goto(BASE + path, wait=True)
+        return _wait_challenge(c)
+    except Exception:
+        return False
+
+
+def _call(c: CDP, code: str, *args, retries: int = 4, pause: float = 2.0):
     last = None
     for attempt in range(retries):
+        arglist = ", ".join(json.dumps(a) for a in args)
         try:
-            arglist = ", ".join(json.dumps(a) for a in args)
-            return c.js(f"({code})({arglist})")
-        except Exception as exc:  # transient page/JS errors are common
+            data = c.js(f"({code})({arglist})")
+        except Exception as exc:  # transient JS/page errors
             last = exc
             time.sleep(pause)
+            continue
+        if not _is_blocked(data):
+            return data
+        path = next((a for a in args if isinstance(a, str) and a.startswith("/")), None)
+        last = f"Cloudflare challenge on {path} (status {data.get('status')})"
+        if path and attempt < retries - 1:
+            print(f"    challenge on {path} — visiting the tab to clear it")
+            _warmup(c, path)
     raise RuntimeError(f"extractor failed after {retries} attempts: {last}")
 
 
@@ -62,10 +102,11 @@ def scrape_event(c: CDP, event_id: int | str, out: str, delay: float = 1.5) -> d
             c.goto(canonical)
 
     if "just a moment" in (c.title() or "").lower():
-        raise SystemExit(
-            "Stuck on the Cloudflare challenge. Bring the Chrome window to the "
-            "front, click the checkbox once, then re-run."
-        )
+        if not _wait_challenge(c, 30):
+            raise SystemExit(
+                "Stuck on the Cloudflare challenge. Bring the Chrome window to the "
+                "front, click the checkbox once, then re-run."
+            )
 
     meta = _call(c, js.JS_EVENT_META)
     meta["eventId"] = str(event_id)

@@ -135,6 +135,15 @@ def build(out: str) -> dict:
     by_url = {m["url"]: m for m in matches}
     stages = stage_lookup(brackets, results)
 
+    # Refuse to build from an empty event-level scrape: writing nothing would
+    # leave the previous run's CSVs in place and look like success.
+    if not players:
+        raise SystemExit("event player table is empty (likely a Cloudflare challenge) "
+                         "— re-run: python -m hltv scrape --event <id>")
+    if not teams:
+        raise SystemExit("event team table is empty (likely a Cloudflare challenge) "
+                         "— re-run: python -m hltv scrape --event <id>")
+
     # ---- results.csv
     res_rows = []
     for r in sorted(results, key=lambda x: int(x["unix"] or 0)):

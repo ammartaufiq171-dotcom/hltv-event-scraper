@@ -46,7 +46,11 @@ JS_EVENT_META = r"""
 
 JS_RESULTS = r"""
 async (url) => {
-  const html = await (await fetch(url, {credentials: 'include'})).text();
+  const res = await fetch(url, {credentials: 'include'});
+  const html = await res.text();
+  if (!res.ok || /Just a moment/i.test(html.slice(0, 3000))) {
+    return { blocked: true, status: res.status };
+  }
   const doc = new DOMParser().parseFromString(html, 'text/html');
   return Array.from(doc.querySelectorAll('.result-con')).map(rc => {
     const a = rc.querySelector('a[href*="/matches/"]');
@@ -112,7 +116,11 @@ JS_BRACKETS = r"""
 
 JS_TEAMS = r"""
 async (url) => {
-  const html = await (await fetch(url, {credentials: 'include'})).text();
+  const res = await fetch(url, {credentials: 'include'});
+  const html = await res.text();
+  if (!res.ok || /Just a moment/i.test(html.slice(0, 3000))) {
+    return { blocked: true, status: res.status };
+  }
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const t = doc.querySelector('table.player-ratings-table');
   if (!t) return [];
@@ -137,7 +145,11 @@ async (url) => {
 
 JS_PLAYERS = r"""
 async (url) => {
-  const html = await (await fetch(url, {credentials: 'include'})).text();
+  const res = await fetch(url, {credentials: 'include'});
+  const html = await res.text();
+  if (!res.ok || /Just a moment/i.test(html.slice(0, 3000))) {
+    return { blocked: true, status: res.status };
+  }
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const t = doc.querySelector('table.player-ratings-table');
   if (!t) return [];
@@ -169,7 +181,11 @@ async (url) => {
 
 JS_MATCH = r"""
 async (url) => {
-  const html = await (await fetch(url, {credentials: 'include'})).text();
+  const res = await fetch(url, {credentials: 'include'});
+  const html = await res.text();
+  if (!res.ok || /Just a moment/i.test(html.slice(0, 3000))) {
+    return { blocked: true, status: res.status };
+  }
   const doc = new DOMParser().parseFromString(html, 'text/html');
 
   const txt = (tr, sel) => {
@@ -267,7 +283,11 @@ async (url) => {
 
 JS_DETAIL = r"""
 async (path) => {
-  const html = await (await fetch(path, {credentials: 'include'})).text();
+  const res = await fetch(path, {credentials: 'include'});
+  const html = await res.text();
+  if (!res.ok || /Just a moment/i.test(html.slice(0, 3000))) {
+    return { blocked: true, status: res.status };
+  }
   const doc = new DOMParser().parseFromString(html, 'text/html');
 
   const parse = (t) => {
@@ -314,9 +334,13 @@ async (path) => {
 
 JS_UPCOMING = r"""
 async (url) => {
-  const html = await (await fetch(url, {credentials: 'include'})).text();
+  const res = await fetch(url, {credentials: 'include'});
+  const html = await res.text();
+  if (!res.ok || /Just a moment/i.test(html.slice(0, 3000))) {
+    return { blocked: true, status: res.status };
+  }
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  return Array.from(doc.querySelectorAll('.match-bottom')).map(row => {
+  const rows = Array.from(doc.querySelectorAll('.match-bottom')).map(row => {
     const a = row.querySelector('a[href*="/matches/"]');
     const t = row.querySelector('.match-time');
     const meta = row.querySelector('.match-meta');
@@ -329,8 +353,27 @@ async (url) => {
       bo: meta ? meta.innerText.trim() : null,
       team1: names[0] || null,
       team2: names[1] || null,
-      stage: st ? st.innerText.replace(/\s+/g, ' ').trim() : null
+      stage: st ? st.innerText.replace(/\s+/g, ' ').trim() : null,
+      stageClass: st ? String(st.className) : null
     };
   });
+
+  // Some fixtures render no stage text (3rd place decider shows only a
+  // "match-pre-playoff" class). Ask the match page, whose veto box always
+  // spells it out: "Best of 3 (LAN) * 3rd place decider match".
+  for (const r of rows) {
+    if (r.stage || !r.url) continue;
+    if (r.stageClass && /grand-final/.test(r.stageClass)) { r.stage = 'Grand Final'; continue; }
+    try {
+      const h = await (await fetch(r.url, {credentials: 'include'})).text();
+      const d = new DOMParser().parseFromString(h, 'text/html');
+      const v = d.querySelector('.veto-box .preformatted-text') || d.querySelector('.veto-box');
+      if (!v) continue;
+      const t = v.innerText.replace(/\s+/g, ' ').trim();
+      const i = t.indexOf('*');
+      r.stage = i >= 0 ? t.slice(i + 1).trim() : null;
+    } catch (e) { /* leave stage empty */ }
+  }
+  return rows;
 }
 """
