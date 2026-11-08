@@ -43,6 +43,14 @@ and if a checkbox appears you click it once. The scraper then attaches to that
 same browser over the DevTools protocol, so every `fetch()` carries the
 clearance cookie and every page renders exactly as a human would see it.
 
+Cloudflare can still challenge a path mid-run (stats pages seem to be watched
+more closely than match pages). A challenged path returns 403 to `fetch()` even
+though the tab is cleared — but loading that URL once in the visible tab makes
+the next fetch return 200. The scraper detects this (`{blocked: true}` from the
+extractors), visits the page to warm it up, and retries. If it gives up, the
+message says so instead of writing an empty file, and `build` refuses to run on
+an empty event table so the previous run's CSVs can't pass for new ones.
+
 ## Quick start
 
 ```bash
